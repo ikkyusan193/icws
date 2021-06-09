@@ -31,6 +31,13 @@ void respond_server(int connFd, char *path, int get) {
         if(strcmp(ext, "html")==0) type = "text/html";
         else if(strcmp(ext, "jpg")==0) type = "image/jpg";
         else if(strcmp(ext, "jpeg")==0) type = "image/jpeg";
+        else if(strcmp(ext, "png")==0) type = "image/png";
+        else if(strcmp(ext, "gif")==0) type = "image/gif";
+        else if(strcmp(ext, "js")==0) type = "text/javascript";
+        else if(strcmp(ext, "txt")==0) type = "text/plain";
+        else if(strcmp(ext, "css")==0) type = "text/css";
+
+
 
         if(strcmp(type, "null")==0) {
             char * msg = "respond with 404\n";
