@@ -60,30 +60,30 @@ void respond_server(int connFd, char *path) {
 
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
-
-    if (!read_line(connFd, buf, MAXBUF)) 
-        return ;  /* Quit if we can't read the first line */
-
-    printf("LOG: %s\n", buf);
-    /* [METHOD] [URI] [HTTPVER] */
-
     //todo
     int fd_in = open(rootFolder,O_RDONLY);
-    int readRet = read(fd_in,buf,8192);
-    Request *request = parse(MAXBUF,readRet,fd_in);
+    int readRet = read(connFd,buf,8192);
+    if (!readRet) 
+        return ;  /* Quit if we can't read the first line */
+
+    // printf("LOG: %s\n", buf);
+    /* [METHOD] [URI] [HTTPVER] */
+
+    Request *request = parse(buf,readRet,connFd);
     if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
         char path[MAXBUF];
         strcpy(path, rootFolder);
         strcat(path, request->http_uri);
         printf("LOG: Sending %s\n", path);
         respond_server(connFd, path);
-    }else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
-        char path[MAXBUF];
-        strcpy(path, rootFolder);
-        strcat(path, request->http_uri);
-        printf("LOG: Sending %s\n", path);
-        respond_server(connFd, path);
-    }    
+    }
+    // if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
+    //     char path[MAXBUF];
+    //     strcpy(path, rootFolder);
+    //     strcat(path, request->http_uri);
+    //     printf("LOG: Sending %s\n", path);
+    //     respond_server(connFd, path);
+    // }    
     else {
         printf("LOG: Unknown request\n");
     }            
