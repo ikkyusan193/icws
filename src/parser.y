@@ -204,8 +204,9 @@ request_line: token t_sp text t_sp text t_crlf {
 	strcpy(parsing_request->http_version, $5);
 }
 
-request_header: token ows t_colon ows text ows t_crlf {
+request_header_field: token ows t_colon ows text ows t_crlf {
 	YPRINTF("request_Header:\n%s\n%s\n",$1,$5);
+	parsing_request->headers = realloc(parsing_request->headers, sizeof(Request_header)*(parsing_request->header_count + 1));
     strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
 	strcpy(parsing_request->headers[parsing_request->header_count].header_value, $5);
 	parsing_request->header_count++;
@@ -218,6 +219,16 @@ request_header: token ows t_colon ows text ows t_crlf {
  * 2616.  All the best!
  *
  */
+ 
+request_header: request_header_field {
+        YPRINTF("parsing_request: Matched Success.\n");
+        return SUCCESS;
+}; 
+| request_header_field request_header{
+        YPRINTF("parsing_request: Matched Success.\n");
+        return SUCCESS;
+};
+
 request: request_line request_header t_crlf{
 	YPRINTF("parsing_request: Matched Success.\n");
 	return SUCCESS;
