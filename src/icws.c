@@ -10,19 +10,15 @@
 #include "pcsa_net.h"
 #include <getopt.h>
 #include "parse.h"
-
+#include "time.h"
 
 /* Rather arbitrary. In real life, be careful with buffer overflow */
 #define MAXBUF 1024
 
 typedef struct sockaddr SA;
 
-void respond_server(int connFd, char *path) {
+void respond_server(int connFd, char *path, int get) {
     char buf[MAXBUF];
-    int inputFd = open(path, O_RDONLY);
-    if(inputFd <= 0) {
-        printf("inputFd was %d\n", inputFd);
-    }
     ssize_t numRead;
     
     struct stat s;
@@ -39,51 +35,70 @@ void respond_server(int connFd, char *path) {
         if(strcmp(type, "null")==0) {
             char * msg = "respond with 404\n";
             write_all(connFd, msg , strlen(msg) );
-            close(inputFd);
             return ;
         }
 
+
+        time_t t = time(NULL);
+        struct tm *tm = localtime(&t);
+        char date[50];
+        strftime(date,sizeof(date),"%c",tm);   
+        struct stat filestat;
+        stat(path,&filestat);
+
         sprintf(buf,
             "HTTP/1.1 200 OK\r\n"
+            "Date: %s\r\n"
             "Server: Tiny\r\n"
             "Connection: close\r\n"
             "Content-length: %lu\r\n"
-            "Content-type: %s\r\n\r\n", s.st_size, type);
+            "Content-type: %s\r\n"
+            "Last-Modified: %s\r\n" ,date,s.st_size, type, ctime(&filestat.st_mtime));
         write_all(connFd, buf, strlen(buf));
+
     }
-    while ((numRead = read(inputFd, buf, MAXBUF)) > 0) {
-        /* What about short counts? */
-        write_all(connFd, buf, numRead);
+
+    if(get == 1){
+        int inputFd = open(path, O_RDONLY);
+        if(inputFd <= 0) {
+            printf("inputFd was %d\n", inputFd);
+        }
+        while ((numRead = read(inputFd, buf, MAXBUF)) > 0) {
+            /* What about short counts? */
+            write_all(connFd, buf, numRead);
+        }
+        close(inputFd);
     }
-    close(inputFd);
 }
 
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
-    //todo
-    int fd_in = open(rootFolder,O_RDONLY);
+
     int readRet = read(connFd,buf,8192);
     if (!readRet) 
         return ;  /* Quit if we can't read the first line */
-
     // printf("LOG: %s\n", buf);
     /* [METHOD] [URI] [HTTPVER] */
 
     Request *request = parse(buf,readRet,connFd);
+    if(request == NULL){
+        return ;
+    }
+
     if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
         char path[MAXBUF];
         strcpy(path, rootFolder);
         strcat(path, request->http_uri);
         printf("LOG: Sending %s\n", path);
-        respond_server(connFd, path);
+        respond_server(connFd, path, 1);
     }
-    // if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
-    //     char path[MAXBUF];
-    //     strcpy(path, rootFolder);
-    //     strcat(path, request->http_uri);
-    //     printf("LOG: Sending %s\n", path);
-    //     respond_server(connFd, path);
-    // }    
+    else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
+        char path[MAXBUF];
+        strcpy(path, rootFolder);
+        strcat(path, request->http_uri);
+        printf("LOG: Sending %s\n", path);
+        respond_server(connFd, path , 0);
+    }    
     else {
         printf("LOG: Unknown request\n");
     }            
