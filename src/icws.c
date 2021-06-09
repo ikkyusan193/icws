@@ -63,6 +63,9 @@ void respond_server(int connFd, char *path, int get) {
             "Last-Modified: %s\r\n" ,date,s.st_size, type, ctime(&filestat.st_mtime));
         write_all(connFd, buf, strlen(buf));
 
+    }else{
+        sprintf(buf,"Error 404, File not found\r\n");
+        write_all(connFd,buf, strlen(buf));
     }
 
     if(get == 1){
@@ -92,6 +95,11 @@ void serve_http(int connFd, char *rootFolder) {
         return ;
     }
 
+    if(strcmp(request->http_version,"HTTP/1.1") != 0){
+        sprintf(buf,"Error 505, bad version numbers\r\n");
+        write_all(connFd,buf, strlen(buf));
+    }
+
     if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
         char path[MAXBUF];
         strcpy(path, rootFolder);
@@ -107,16 +115,13 @@ void serve_http(int connFd, char *rootFolder) {
         respond_server(connFd, path , 0);
     }    
     else {
-        printf("LOG: Unknown request\n");
+        sprintf(buf,"Error 501, unsupported methods\r\n");
+        write_all(connFd,buf, strlen(buf));
     }            
 }
 
-
-
-
 int main(int argc, char* argv[])
 {
-
     int c = 0;
     char listenPort[MAXBUF];
     char wwwRoot[MAXBUF];
