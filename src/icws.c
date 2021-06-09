@@ -37,14 +37,11 @@ void respond_server(int connFd, char *path, int get) {
         else if(strcmp(ext, "txt")==0) type = "text/plain";
         else if(strcmp(ext, "css")==0) type = "text/css";
 
-
-
         if(strcmp(type, "null")==0) {
             char * msg = "respond with 404\n";
             write_all(connFd, msg , strlen(msg) );
             return ;
         }
-
 
         time_t t = time(NULL);
         struct tm *tm = localtime(&t);
@@ -98,6 +95,7 @@ void serve_http(int connFd, char *rootFolder) {
     if(strcmp(request->http_version,"HTTP/1.1") != 0){
         sprintf(buf,"Error 505, bad version numbers\r\n");
         write_all(connFd,buf, strlen(buf));
+        return ;
     }
 
     if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
