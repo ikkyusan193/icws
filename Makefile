@@ -3,9 +3,9 @@ OBJ_DIR := obj
 # all src files
 SRC := $(wildcard $(SRC_DIR)/*.c)
 # all objects
-OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/sample_parse.o
+OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/icws.o $(OBJ_DIR)/pcsa_net.o
 # all binaries
-BIN := sample_parse
+BIN := icws
 # C compiler
 CC  := gcc
 # C PreProcessor Flag
@@ -15,9 +15,9 @@ CFLAGS   := -g -Wall
 # DEPS = parse.h y.tab.h
 
 default: all
-all : sample_parse 
+all : icws
 
-sample_parse: $(OBJ)
+icws: $(OBJ)
 	$(CC) $^ -o $@
 
 $(SRC_DIR)/lex.yy.c: $(SRC_DIR)/lexer.l
