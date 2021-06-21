@@ -10,12 +10,33 @@
 #include "pcsa_net.h"
 #include <getopt.h>
 #include "parse.h"
+#include <pthread.h>
 #include "time.h"
 
 /* Rather arbitrary. In real life, be careful with buffer overflow */
-#define MAXBUF 1024
+#define MAXBUF 8192 
 
 typedef struct sockaddr SA;
+
+
+/* TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO */
+typedef struct Task{
+    struct sockaddr_storage clientAddr;
+    int connFd;
+    char wwwRoot[MAXBUF];
+} Task;
+
+Task taskQueue[256];
+
+
+int taskCount = 0;
+pthread_mutex_t mutexQueue;
+pthread_mutex_t parseQueue;
+pthread_cond_t condQueue;
+//////////////////////////////////////////////////////////
+
+
+
 
 void respond_server(int connFd, char *path, int get) {
     char buf[MAXBUF];
@@ -26,6 +47,10 @@ void respond_server(int connFd, char *path, int get) {
     char* type = "null";
     char* ext = strrchr(path, '.');
     ext = ext+1;
+
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    char date[50];
 
     if(stat(path, &s)>=0) {
         if(strcmp(ext, "html")==0) type = "text/html";
@@ -43,9 +68,7 @@ void respond_server(int connFd, char *path, int get) {
             return ;
         }
 
-        time_t t = time(NULL);
-        struct tm *tm = localtime(&t);
-        char date[50];
+
         strftime(date,sizeof(date),"%c",tm);   
         struct stat filestat;
         stat(path,&filestat);
@@ -61,8 +84,15 @@ void respond_server(int connFd, char *path, int get) {
         write_all(connFd, buf, strlen(buf));
 
     }else{
-        sprintf(buf,"Error 404, File not found\r\n");
+            sprintf(buf,
+            "HTTP/1.1 404 NOT OK\r\n"
+            "Date: %s\r\n"
+            "Server: Tiny\r\n"
+            "Connection: close\r\n"
+            "Content-type: NULL\r\n"
+            ,date, type);
         write_all(connFd,buf, strlen(buf));
+        return ;
     }
 
     if(get == 1){
@@ -80,24 +110,34 @@ void respond_server(int connFd, char *path, int get) {
 
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
-
-    int readRet = read(connFd,buf,8192);
-    if (!readRet) 
-        return ;  /* Quit if we can't read the first line */
-    // printf("LOG: %s\n", buf);
+    char sbuf[MAXBUF];
+    int readRet;
+    while((readRet = read(connFd,sbuf,MAXBUF)) > 0){
+        strcat(buf,sbuf);
+        memset(sbuf,0,MAXBUF);
+        if(strstr(buf, "\r\n\r\n") != NULL) break;
+    }
+    pthread_mutex_lock(&parseQueue);
+    Request *request = parse(buf,sizeof(buf),connFd);
+    pthread_mutex_unlock(&parseQueue);
+    if (!readRet) return ;  
     /* [METHOD] [URI] [HTTPVER] */
-
-    Request *request = parse(buf,readRet,connFd);
     if(request == NULL){
         return ;
     }
-
     if(strcmp(request->http_version,"HTTP/1.1") != 0){
-        sprintf(buf,"Error 505, bad version numbers\r\n");
+            time_t t = time(NULL);
+            struct tm *tm = localtime(&t);
+            char date[50];
+            strftime(date,sizeof(date),"%c",tm); 
+            sprintf(buf,
+            "HTTP/1.1 505 NOT OK\r\n"
+            "Server: Tiny\r\n"
+            "Connection: close\r\n"
+            "Content-type: NULL\r\n",date);
         write_all(connFd,buf, strlen(buf));
         return ;
     }
-
     if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
         char path[MAXBUF];
         strcpy(path, rootFolder);
@@ -112,14 +152,59 @@ void serve_http(int connFd, char *rootFolder) {
         printf("LOG: Sending %s\n", path);
         respond_server(connFd, path , 0);
     }    
-    else {
-        sprintf(buf,"Error 501, unsupported methods\r\n");
+    else 
+    {
+            time_t t = time(NULL);
+            struct tm *tm = localtime(&t);
+            char date[50];
+            strftime(date,sizeof(date),"%c",tm); 
+            sprintf(buf,
+            "HTTP/1.1 505, unsupported methods\r\n"
+            "Server: Tiny\r\n"
+            "Connection: close\r\n"
+            "Content-type: %s\r\n",date, "NULL");
         write_all(connFd,buf, strlen(buf));
-    }            
+        return ;
+    }
 }
+
+void submitTask(Task task){
+    pthread_mutex_lock(&mutexQueue);
+    taskQueue[taskCount] = task;
+    taskCount++;
+    pthread_mutex_unlock(&mutexQueue);
+    pthread_cond_signal(&condQueue);
+}
+
+
+void executeTask(Task* task){
+    serve_http(task->connFd,task->wwwRoot);
+    close(task->connFd);
+}
+
+void *startThread(void* args){
+    while(1){
+        Task task;
+        pthread_mutex_lock(&mutexQueue);
+        while(taskCount == 0){
+            pthread_cond_wait(&condQueue, &mutexQueue);
+        }
+        task = taskQueue[0];
+        int i;
+        for(i = 0; i < taskCount - 1; i++){
+            taskQueue[i] = taskQueue[i+1];
+        }
+        taskCount--;
+        pthread_mutex_unlock(&mutexQueue);
+        executeTask(&task);
+    }
+}
+
 
 int main(int argc, char* argv[])
 {
+    int THREAD_NUM;
+    int timeout;
     int c = 0;
     char listenPort[MAXBUF];
     char wwwRoot[MAXBUF];
@@ -128,16 +213,34 @@ int main(int argc, char* argv[])
     {
         {"port",      required_argument,       0,  'p' },
         {"root",      required_argument,       0,  'r' },
+        {"numthreads",required_argument,       0,  'n'},
+        {"timeout",   required_argument,       0,  't'},
         {0,0,0,0}
     };
-
     int long_index =0;
-    while ((c = getopt_long(argc, argv,"p:r:", long_options, &long_index )) != -1) {
+    while ((c = getopt_long(argc, argv,"p:r:n:t:", long_options, &long_index )) != -1) {
         switch (c) {
              case 'p' : strcpy(listenPort,optarg);
                  break;
              case 'r' : strcpy(wwwRoot,optarg);
                  break;
+             case 'n' : THREAD_NUM = atoi(optarg);
+                 break;
+             case 't' : timeout = atoi(optarg);
+                 break;    
+             default:
+                    printf("Invalid/Unknown option");
+                    return;
+        }
+    }
+
+    pthread_t threadPool[THREAD_NUM];
+    pthread_mutex_init(&mutexQueue, NULL);
+    pthread_mutex_init(&parseQueue, NULL);
+    pthread_cond_init(&condQueue, NULL);
+    for(int i = 0; i < THREAD_NUM; i++){
+        if(pthread_create(&threadPool[i], NULL, &startThread, NULL) != 0){
+            perror("Failed to create thread");
         }
     }
 
@@ -145,7 +248,6 @@ int main(int argc, char* argv[])
         printf("Invalid input");
         exit(-1);
     }
-
     // printf("%s\n",listenPort);
     // printf("%s\n",wwwRoot);
 
@@ -161,14 +263,28 @@ int main(int argc, char* argv[])
             sleep(1);
             continue; 
         }
+
         char hostBuf[MAXBUF], svcBuf[MAXBUF];
         if (getnameinfo((SA *) &clientAddr, clientLen, 
                         hostBuf, MAXBUF, svcBuf, MAXBUF, 0)==0) 
             printf("Connection from %s:%s\n", hostBuf, svcBuf);
         else
             printf("Connection from ?UNKNOWN?\n");
-        
-        serve_http(connFd, wwwRoot);
-        close(connFd);
+       
+        struct Task task;
+        task.connFd = connFd;
+        memcpy(&task.clientAddr, &clientAddr, sizeof(struct sockaddr_storage));
+        strcpy(task.wwwRoot, wwwRoot);
+        submitTask(task);
     }
+
+    for(int i = 0; i < THREAD_NUM; i++){
+        if (pthread_join(&threadPool[i],NULL) != 0){
+                perror("Failed to join thread\n");
+            }
+        }
+        pthread_mutex_destroy(&mutexQueue);
+        pthread_cond_destroy(&condQueue);
+
+    return 0;
 }
