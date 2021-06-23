@@ -37,6 +37,69 @@ pthread_cond_t condQueue;
 
 
 
+void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf){  
+
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    char date[50];
+    strftime(date,sizeof(date),"%c",tm); 
+
+    struct stat filestat;
+    stat(path,&filestat);
+
+    switch(code){
+        case 404:
+                sprintf(buf,
+                    "HTTP/1.1 %d Not Found\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: close\r\n"
+                    "Content-type: %s\r\n"
+                    , code, date, "NULL");
+                    break;
+        case 408:
+                sprintf(buf,
+                    "HTTP/1.1 %d Request Timeout\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: close\r\n"
+                    "Content-type: %s\r\n"
+                    , code, date, "NULL");
+                    break;
+        case 411:
+                sprintf(buf,
+                    "HTTP/1.1 %d Length Required\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: close\r\n"
+                    "Content-type: %s\r\n"
+                    , code, date, "NULL");
+                    break;
+        case 505:
+                sprintf(buf,
+                    "HTTP/1.1 %d HTTP Version Not Supported\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: close\r\n"
+                    "Content-type: %s\r\n"
+                    , code, date, "NULL");
+                    break;
+        case 200:
+                sprintf(buf,
+                    "HTTP/1.1 %d OK\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: close\r\n"
+                    "Content-length: %lu\r\n"
+                    "Content-type: %s\r\n"
+                    "Last-Modified: %s\r\n" , code, date, stsize, type, ctime(&filestat.st_mtime));
+                    break;
+    }
+
+
+
+}
+
 
 void respond_server(int connFd, char *path, int get) {
     char buf[MAXBUF];
@@ -48,10 +111,6 @@ void respond_server(int connFd, char *path, int get) {
     char* ext = strrchr(path, '.');
     ext = ext+1;
 
-    time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
-    char date[50];
-
     if(stat(path, &s)>=0) {
         if(strcmp(ext, "html")==0) type = "text/html";
         else if(strcmp(ext, "jpg")==0) type = "image/jpg";
@@ -61,36 +120,17 @@ void respond_server(int connFd, char *path, int get) {
         else if(strcmp(ext, "js")==0) type = "text/javascript";
         else if(strcmp(ext, "txt")==0) type = "text/plain";
         else if(strcmp(ext, "css")==0) type = "text/css";
-
+        //empty so give 404
         if(strcmp(type, "null")==0) {
-            char * msg = "respond with 404\n";
-            write_all(connFd, msg , strlen(msg) );
+            mysprinf(404,path,0,type,buf);
+            write_all(connFd, buf , strlen(buf) );
             return ;
         }
-
-
-        strftime(date,sizeof(date),"%c",tm);   
-        struct stat filestat;
-        stat(path,&filestat);
-
-        sprintf(buf,
-            "HTTP/1.1 200 OK\r\n"
-            "Date: %s\r\n"
-            "Server: Tiny\r\n"
-            "Connection: close\r\n"
-            "Content-length: %lu\r\n"
-            "Content-type: %s\r\n"
-            "Last-Modified: %s\r\n" ,date,s.st_size, type, ctime(&filestat.st_mtime));
+        // everything is ok
+        mysprinf(200,path,s.st_size,type,buf);
         write_all(connFd, buf, strlen(buf));
-
     }else{
-            sprintf(buf,
-            "HTTP/1.1 404 NOT OK\r\n"
-            "Date: %s\r\n"
-            "Server: Tiny\r\n"
-            "Connection: close\r\n"
-            "Content-type: NULL\r\n"
-            ,date, type);
+        mysprinf(404,path,0,type,buf);
         write_all(connFd,buf, strlen(buf));
         return ;
     }
@@ -110,6 +150,7 @@ void respond_server(int connFd, char *path, int get) {
 
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
+    memset(buf,0,MAXBUF);
     char sbuf[MAXBUF];
     int readRet;
     while((readRet = read(connFd,sbuf,MAXBUF)) > 0){
@@ -125,16 +166,9 @@ void serve_http(int connFd, char *rootFolder) {
     if(request == NULL){
         return ;
     }
-    if(strcmp(request->http_version,"HTTP/1.1") != 0){
-            time_t t = time(NULL);
-            struct tm *tm = localtime(&t);
-            char date[50];
-            strftime(date,sizeof(date),"%c",tm); 
-            sprintf(buf,
-            "HTTP/1.1 505 NOT OK\r\n"
-            "Server: Tiny\r\n"
-            "Connection: close\r\n"
-            "Content-type: NULL\r\n",date);
+    //everything work now but need change to HTTP/1.0
+    if (strcasecmp(request->http_version, "HTTP/1.1")){
+        mysprinf(505,"",0,"null",buf);
         write_all(connFd,buf, strlen(buf));
         return ;
     }
@@ -144,6 +178,7 @@ void serve_http(int connFd, char *rootFolder) {
         strcat(path, request->http_uri);
         printf("LOG: Sending %s\n", path);
         respond_server(connFd, path, 1);
+        return ;
     }
     else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
         char path[MAXBUF];
@@ -151,18 +186,11 @@ void serve_http(int connFd, char *rootFolder) {
         strcat(path, request->http_uri);
         printf("LOG: Sending %s\n", path);
         respond_server(connFd, path , 0);
+        return ;
     }    
     else 
     {
-            time_t t = time(NULL);
-            struct tm *tm = localtime(&t);
-            char date[50];
-            strftime(date,sizeof(date),"%c",tm); 
-            sprintf(buf,
-            "HTTP/1.1 505, unsupported methods\r\n"
-            "Server: Tiny\r\n"
-            "Connection: close\r\n"
-            "Content-type: %s\r\n",date, "NULL");
+        mysprinf(505,"",0,"null",buf);
         write_all(connFd,buf, strlen(buf));
         return ;
     }
@@ -230,7 +258,7 @@ int main(int argc, char* argv[])
                  break;    
              default:
                     printf("Invalid/Unknown option");
-                    return;
+                    return 1;
         }
     }
 
@@ -238,8 +266,9 @@ int main(int argc, char* argv[])
     pthread_mutex_init(&mutexQueue, NULL);
     pthread_mutex_init(&parseQueue, NULL);
     pthread_cond_init(&condQueue, NULL);
-    for(int i = 0; i < THREAD_NUM; i++){
-        if(pthread_create(&threadPool[i], NULL, &startThread, NULL) != 0){
+    int i;
+    for(i = 0; i < THREAD_NUM; i++){
+        if (pthread_create(&threadPool[i], NULL, &startThread, NULL) != 0){
             perror("Failed to create thread");
         }
     }
@@ -280,11 +309,11 @@ int main(int argc, char* argv[])
 
     for(int i = 0; i < THREAD_NUM; i++){
         if (pthread_join(&threadPool[i],NULL) != 0){
-                perror("Failed to join thread\n");
-            }
+            perror("Failed to join thread\n");
         }
-        pthread_mutex_destroy(&mutexQueue);
-        pthread_cond_destroy(&condQueue);
+    }
+    pthread_mutex_destroy(&mutexQueue);
+    pthread_cond_destroy(&condQueue);
 
     return 0;
 }
