@@ -202,15 +202,16 @@ void serve_http(int connFd, char *rootFolder) {
                     pthread_mutex_lock(&parseQueue);
                     Request *request = parse(buf,sizeof(buf),connFd);
                     pthread_mutex_unlock(&parseQueue);
+                    //check connection will return "close" or "keep-alive" only.
+                    char checkConnection[20];
+                    strcpy(checkConnection,keepConnection(request));
                     if (!readRet) return ;  
-                    /* [METHOD] [URI] [HTTPVER] */
+                    /* Check if request == NULL */
                     if(request == NULL){
-                        //TODO null request 
+                        mysprinf(400,"",0,"null",checkConnection,buf);
+                        write_all(connFd,buf, strlen(buf));
                         return ;
                     }
-                    char checkConnection[20];
-                    //check connection will return "close" or "keep-alive" only.
-                    strcpy(checkConnection,keepConnection(request));
                     //everything work now but need change to HTTP/1.0
                     if (strcasecmp(request->http_version, "HTTP/1.1")){
                         mysprinf(505,"",0,"null",checkConnection,buf);
