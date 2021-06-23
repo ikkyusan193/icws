@@ -42,7 +42,7 @@ int pret;
 
 
 
-void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf){  
+void mysprinf(int code, char *path, unsigned long stsize ,char* type,char* connectionType ,char* buf){  
 
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
@@ -62,47 +62,46 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "HTTP/1.1 %d Not Found\r\n"
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
-                    "Connection: close\r\n"
+                    "Connection: %s\r\n"
                     "Content-type: NULL\r\n\r\n"
-                    , code, date);
+                    , code, date, connectionType);
                     break;
         case 408:
                 sprintf(buf,
                     "HTTP/1.1 %d Request Timeout\r\n"
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
-                    "Connection: close\r\n"
+                    "Connection: %s\r\n"
                     "Content-type: NULL\r\n\r\n"
-                    , code, date);
+                    , code, date, connectionType);
                     break;
         case 411:
                 sprintf(buf,
                     "HTTP/1.1 %d Length Required\r\n"
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
-                    "Connection: close\r\n"
+                    "Connection: %s\r\n"
                     "Content-type: NULL\r\n\r\n"
-                    , code, date);
+                    , code, date, connectionType);
                     break;
         case 505:
                 sprintf(buf,
                     "HTTP/1.1 %d HTTP Version Not Supported\r\n"
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
-                    "Connection: close\r\n"
+                    "Connection: %s\r\n"
                     "Content-type: NULL\r\n\r\n"
-                    , code, date);
+                    , code, date, connectionType);
                     break;
         case 200:
-                printf("x%sx\n",time);
                 sprintf(buf,
                     "HTTP/1.1 %d OK\r\n"
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
-                    "Connection: close\r\n"
+                    "Connection: %s\r\n"
                     "Content-length: %lu\r\n"
                     "Content-type: %s\r\n"
-                    "Last-Modified: %s\r\n\r\n" , code, date, stsize, type, time);
+                    "Last-Modified: %s\r\n\r\n" , code, date, connectionType ,stsize, type, time);
                     break;
     }
 
@@ -111,12 +110,11 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
 }
 
 
-void respond_server(int connFd, char *path, int get) {
+void respond_server(int connFd, char *path, int get, char* connectionType) {
     char buf[MAXBUF];
     ssize_t numRead;
     
     struct stat s;
-    int slen;
     char* type = "null";
     char* ext = strrchr(path, '.');
     ext = ext+1;
@@ -132,15 +130,15 @@ void respond_server(int connFd, char *path, int get) {
         else if(strcmp(ext, "css")==0) type = "text/css";
         //empty so give 404
         if(strcmp(type, "null")==0) {
-            mysprinf(404,path,0,type,buf);
+            mysprinf(404,path,0,type,"close",buf);
             write_all(connFd, buf , strlen(buf) );
             return ;
         }
         // everything is ok
-        mysprinf(200,path,s.st_size,type,buf);
+        mysprinf(200,path,s.st_size,type,connectionType,buf);
         write_all(connFd, buf, strlen(buf));
     }else{
-        mysprinf(404,path,0,type,buf);
+        mysprinf(404,path,0,type,"close",buf);
         write_all(connFd,buf, strlen(buf));
         return ;
     }
@@ -158,6 +156,25 @@ void respond_server(int connFd, char *path, int get) {
     }
 }
 
+
+const char* keepConnection(Request* request){
+    int i;
+    for(i = 0; i < request->header_count;i++){
+        if(strcasecmp(request->headers[i].header_name,"Connection") == 0){
+            if(strcasecmp(request->headers[i].header_value,"keep-alive") == 0){
+                return "keep-alive";
+            }
+            else
+            {
+                return "close";
+            }
+        }
+    }
+    return "close";
+}
+
+
+
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
     memset(buf,0,MAXBUF);
@@ -172,7 +189,7 @@ void serve_http(int connFd, char *rootFolder) {
         pret = poll(fds,1,timeout*1000);
         if (pret == 0)
         {
-            mysprinf(408,"",0,"null",buf);
+            mysprinf(408,"",0,"null","close",buf);
             write_all(connFd,buf,strlen(buf));
             return;
         }
@@ -181,48 +198,53 @@ void serve_http(int connFd, char *rootFolder) {
             if((readRet = read(connFd,sbuf,MAXBUF)) > 0){
                 strcat(buf,sbuf);
                 memset(sbuf,0,MAXBUF);
-                if(strstr(buf, "\r\n\r\n") != NULL) break;
+                if(strstr(buf, "\r\n\r\n") != NULL){
+                    pthread_mutex_lock(&parseQueue);
+                    Request *request = parse(buf,sizeof(buf),connFd);
+                    pthread_mutex_unlock(&parseQueue);
+                    if (!readRet) return ;  
+                    /* [METHOD] [URI] [HTTPVER] */
+                    if(request == NULL){
+                        //TODO null request 
+                        return ;
+                    }
+                    char checkConnection[20];
+                    //check connection will return "close" or "keep-alive" only.
+                    strcpy(checkConnection,keepConnection(request));
+                    //everything work now but need change to HTTP/1.0
+                    if (strcasecmp(request->http_version, "HTTP/1.1")){
+                        mysprinf(505,"",0,"null",checkConnection,buf);
+                        write_all(connFd,buf, strlen(buf));
+                        return ;
+                    }
+                    char path[MAXBUF];
+                    strcpy(path, rootFolder);
+                    strcat(path, request->http_uri);
+                    //add index.html to path if no have
+                    if(strcmp(request->http_uri,"/") == 0){
+                        strcat(path,"index.html");
+                    } 
+                    if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
+                        printf("LOG: Sending %s\n", path);
+                        respond_server(connFd, path, 1,checkConnection);
+                    }
+                    else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
+                        printf("LOG: Sending %s\n", path);
+                        respond_server(connFd, path , 0,checkConnection);
+                    }    
+                    else 
+                    {
+                        mysprinf(505,"",0,"null",checkConnection,buf);
+                        write_all(connFd,buf, strlen(buf));
+                        return ;
+                    }
+                    free(request);
+                    memset(buf,0,MAXBUF);
+                    if (strcasecmp(checkConnection,"close") == 0) break;
+                }
             }
         }
     }
-    pthread_mutex_lock(&parseQueue);
-    Request *request = parse(buf,sizeof(buf),connFd);
-    pthread_mutex_unlock(&parseQueue);
-    if (!readRet) return ;  
-    /* [METHOD] [URI] [HTTPVER] */
-    if(request == NULL){
-        return ;
-    }
-    //everything work now but need change to HTTP/1.0
-    if (strcasecmp(request->http_version, "HTTP/1.1")){
-        mysprinf(505,"",0,"null",buf);
-        write_all(connFd,buf, strlen(buf));
-        return ;
-    }
-    if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
-        char path[MAXBUF];
-        strcpy(path, rootFolder);
-        strcat(path, request->http_uri);
-        printf("LOG: Sending %s\n", path);
-        respond_server(connFd, path, 1);
-        return ;
-    }
-    else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
-        char path[MAXBUF];
-        strcpy(path, rootFolder);
-        strcat(path, request->http_uri);
-        printf("LOG: Sending %s\n", path);
-        respond_server(connFd, path , 0);
-        return ;
-    }    
-    else 
-    {
-        mysprinf(505,"",0,"null",buf);
-        write_all(connFd,buf, strlen(buf));
-        return ;
-    }
-
-
 }
 
 void submitTask(Task task){
@@ -338,11 +360,11 @@ int main(int argc, char* argv[])
         submitTask(task);
     }
 
-    for(int i = 0; i < THREAD_NUM; i++){
-        if (pthread_join(&threadPool[i],NULL) != 0){
-            perror("Failed to join thread\n");
-        }
-    }
+    // for(int i = 0; i < THREAD_NUM; i++){
+    //     if (pthread_join(&threadPool[i],NULL) != 0){
+    //         perror("Failed to join thread\n");
+    //     }
+    // }
     pthread_mutex_destroy(&mutexQueue);
     pthread_cond_destroy(&condQueue);
 
