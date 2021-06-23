@@ -12,6 +12,7 @@
 #include "parse.h"
 #include <pthread.h>
 #include "time.h"
+#include <poll.h>
 
 /* Rather arbitrary. In real life, be careful with buffer overflow */
 #define MAXBUF 8192 
@@ -33,6 +34,10 @@ int taskCount = 0;
 pthread_mutex_t mutexQueue;
 pthread_mutex_t parseQueue;
 pthread_cond_t condQueue;
+
+int timeout = 600; //default timeout = 1min
+struct pollfd fds[1];
+int pret;
 //////////////////////////////////////////////////////////
 
 
@@ -41,11 +46,15 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
 
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
-    char date[50];
+    char date[100];
     strftime(date,sizeof(date),"%c",tm); 
 
     struct stat filestat;
     stat(path,&filestat);
+
+    char time[100]; 
+    strcpy(time,ctime(&filestat.st_mtime));
+    time[strlen(time)-1] = '\0';
 
     switch(code){
         case 404:
@@ -54,8 +63,8 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
                     "Connection: close\r\n"
-                    "Content-type: %s\r\n"
-                    , code, date, "NULL");
+                    "Content-type: NULL\r\n\r\n"
+                    , code, date);
                     break;
         case 408:
                 sprintf(buf,
@@ -63,8 +72,8 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
                     "Connection: close\r\n"
-                    "Content-type: %s\r\n"
-                    , code, date, "NULL");
+                    "Content-type: NULL\r\n\r\n"
+                    , code, date);
                     break;
         case 411:
                 sprintf(buf,
@@ -72,8 +81,8 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
                     "Connection: close\r\n"
-                    "Content-type: %s\r\n"
-                    , code, date, "NULL");
+                    "Content-type: NULL\r\n\r\n"
+                    , code, date);
                     break;
         case 505:
                 sprintf(buf,
@@ -81,10 +90,11 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "Date: %s\r\n"
                     "Server: Tiny\r\n"
                     "Connection: close\r\n"
-                    "Content-type: %s\r\n"
-                    , code, date, "NULL");
+                    "Content-type: NULL\r\n\r\n"
+                    , code, date);
                     break;
         case 200:
+                printf("x%sx\n",time);
                 sprintf(buf,
                     "HTTP/1.1 %d OK\r\n"
                     "Date: %s\r\n"
@@ -92,7 +102,7 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type, char* buf)
                     "Connection: close\r\n"
                     "Content-length: %lu\r\n"
                     "Content-type: %s\r\n"
-                    "Last-Modified: %s\r\n" , code, date, stsize, type, ctime(&filestat.st_mtime));
+                    "Last-Modified: %s\r\n\r\n" , code, date, stsize, type, time);
                     break;
     }
 
@@ -152,11 +162,28 @@ void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
     memset(buf,0,MAXBUF);
     char sbuf[MAXBUF];
+    memset(sbuf,0,MAXBUF);
     int readRet;
-    while((readRet = read(connFd,sbuf,MAXBUF)) > 0){
-        strcat(buf,sbuf);
-        memset(sbuf,0,MAXBUF);
-        if(strstr(buf, "\r\n\r\n") != NULL) break;
+    while(1)
+    {
+        fds[0].fd = connFd;
+        fds[0].events = 0;
+        fds[0].events = POLLIN;
+        pret = poll(fds,1,timeout*1000);
+        if (pret == 0)
+        {
+            mysprinf(408,"",0,"null",buf);
+            write_all(connFd,buf,strlen(buf));
+            return;
+        }
+        else
+        {
+            if((readRet = read(connFd,sbuf,MAXBUF)) > 0){
+                strcat(buf,sbuf);
+                memset(sbuf,0,MAXBUF);
+                if(strstr(buf, "\r\n\r\n") != NULL) break;
+            }
+        }
     }
     pthread_mutex_lock(&parseQueue);
     Request *request = parse(buf,sizeof(buf),connFd);
@@ -194,6 +221,8 @@ void serve_http(int connFd, char *rootFolder) {
         write_all(connFd,buf, strlen(buf));
         return ;
     }
+
+
 }
 
 void submitTask(Task task){
@@ -232,11 +261,13 @@ void *startThread(void* args){
 int main(int argc, char* argv[])
 {
     int THREAD_NUM;
-    int timeout;
-    int c = 0;
+
     char listenPort[MAXBUF];
     char wwwRoot[MAXBUF];
 
+
+
+    int c = 0;
     static struct option long_options[] = 
     {
         {"port",      required_argument,       0,  'p' },
