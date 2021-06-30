@@ -31,14 +31,15 @@ typedef struct Task{
     char wwwRoot[MAXBUF];
 } Task;
 
-Task taskQueue[256];
+Task taskQueue[MAXBUF];
 int taskCount = 0;
 pthread_mutex_t mutexQueue;
 pthread_mutex_t parseQueue;
 pthread_cond_t condQueue;
 ////////////////////////////////////////////////////////// Request stuff
 char listenPort[MAXBUF];
-typedef struct request_environment{
+
+typedef struct all_request_environment{
     char CONTENT_LENGTH[MAXBUF];
     char CONTENT_TYPE[MAXBUF];
     char HTTP_ACCEPT[MAXBUF];
@@ -50,9 +51,9 @@ typedef struct request_environment{
     char HTTP_COOKIE[MAXBUF];
     char HTTP_USER_AGENT[MAXBUF];
     char HTTP_CONNECTION[MAXBUF];
-} request_environment;
+} all_request_environment;
 
-char path[MAXBUF];
+
 char hostBuf[MAXBUF];
 char svcBuf[MAXBUF];
 char wwwRoot[MAXBUF];
@@ -60,7 +61,8 @@ char wwwRoot[MAXBUF];
 int timeout = 2000; //default timeout = 1min
 char cgiProgram[MAXBUF];
 
-
+int flag = 0;
+char environment_ip[MAXBUF];
 
 void mysprinf(int code, char *path, unsigned long stsize ,char* type,char* connectionType ,char* buf){  
 
@@ -124,9 +126,6 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type,char* conne
                     "Last-Modified: %s\r\n\r\n" , code, date, connectionType ,stsize, type, time);
                     break;
     }
-
-
-
 }
 
 void respond_server(int connFd, char *path, int get, char* connectionType) {
@@ -150,7 +149,7 @@ void respond_server(int connFd, char *path, int get, char* connectionType) {
         //empty so give 404
         if(strcmp(type, "null")==0) {
             mysprinf(404,path,0,type,"close",buf);
-            write_all(connFd, buf , strlen(buf) );
+            write_all(connFd, buf , strlen(buf));
             return ;
         }
         // everything is ok
@@ -193,7 +192,7 @@ const char* keepConnection(Request* request){
 }
 
 
-void find_environment(Request* request,struct request_environment req_env){
+void find_environment(Request* request, all_request_environment req_env){
     int i;
     for(i = 0; i < request->header_count; i++){
         if(strcasecmp(request->headers[i].header_name,"CONTENT-LENGTH") == 0){
@@ -228,41 +227,49 @@ void find_environment(Request* request,struct request_environment req_env){
         }
         else if(strcasecmp(request->headers[i].header_name,"CONNECTION") == 0){
             strcpy(req_env.HTTP_CONNECTION,request->headers[i].header_value); 
-        }        
+        }
     }
 }
 
 void fail_exit(char *msg) { fprintf(stderr, "%s\n", msg); exit(-1); }
 
-void set_environment(Request *request){
-    struct request_environment info;
-    find_environment(request, info);
-    //set inviront ment from request_environtment info
-    setenv("CONTENT_LENGTH",info.CONTENT_LENGTH,1);
-    setenv("CONTENT_TYPE",info.CONTENT_TYPE,1);
-    setenv("REQUEST_METHOD",request->http_method,1);
-    setenv("REQUEST_URI",request->http_uri,1);
-    setenv("HTTP_ACCEPT",info.HTTP_ACCEPT,1);
-    setenv("HTTP_REFERER",info.HTTP_REFERER,1);
-    setenv("HTTP_ACCEPT_ENCODING",info.HTTP_ACCEPT_ENCODING,1);
-    setenv("HTTP_ACCEPT_LANGUAGE",info.HTTP_ACCEPT_LANGUAGE,1);
-    setenv("HTTP_ACCEPT_CHARSET",info.HTTP_ACCEPT_CHARSET,1);
-    setenv("HTTP_HOST",info.HTTP_HOST,1);
-    setenv("HTTP_COOKIE",info.HTTP_COOKIE,1);
-    setenv("HTTP_USER_AGENT",info.HTTP_USER_AGENT,1);
-    setenv("HTTP_CONNECTION",info.HTTP_CONNECTION,1);
+void set_environment(Request *request, all_request_environment req_env){
+    //set inviront ment from request_environtment req
+    if(strlen(req_env.CONTENT_LENGTH) > 0)setenv("CONTENT_LENGTH",req_env.CONTENT_LENGTH,1);
+    if(strlen(req_env.CONTENT_TYPE) > 0)setenv("CONTENT_TYPE",req_env.CONTENT_TYPE,1);
+    if(strlen(request->http_method) > 0)setenv("REQUEST_METHOD",request->http_method,1);
+    if(strlen(request->http_uri) > 0)setenv("REQUEST_URI",request->http_uri,1);
+    if(strlen(req_env.HTTP_ACCEPT) > 0)setenv("HTTP_ACCEPT",req_env.HTTP_ACCEPT,1);
+    if(strlen(req_env.HTTP_REFERER) > 0)setenv("HTTP_REFERER",req_env.HTTP_REFERER,1);
+    if(strlen(req_env.HTTP_ACCEPT_ENCODING) > 0)setenv("HTTP_ACCEPT_ENCODING",req_env.HTTP_ACCEPT_ENCODING,1);
+    if(strlen(req_env.HTTP_ACCEPT_LANGUAGE) > 0)setenv("HTTP_ACCEPT_LANGUAGE",req_env.HTTP_ACCEPT_LANGUAGE,1);
+    if(strlen(req_env.HTTP_ACCEPT_CHARSET) > 0)setenv("HTTP_ACCEPT_CHARSET",req_env.HTTP_ACCEPT_CHARSET,1);
+    if(strlen(req_env.HTTP_HOST) > 0)setenv("HTTP_HOST",req_env.HTTP_HOST,1);
+    if(strlen(req_env.HTTP_COOKIE) > 0)setenv("HTTP_COOKIE",req_env.HTTP_COOKIE,1);
+    if(strlen(req_env.HTTP_USER_AGENT) > 0)setenv("HTTP_USER_AGENT",req_env.HTTP_USER_AGENT,1);
+    if(strlen(req_env.HTTP_CONNECTION) > 0)setenv("HTTP_CONNECTION",req_env.HTTP_CONNECTION,1);
     setenv("GATEWAY_INTERFACE","CGI/1.1",1);
-    setenv("SERVER_PORT",listenPort,1);
+    if(strlen(listenPort) > 0)setenv("SERVER_PORT",listenPort,1);
     setenv("SERVER_PROTOCOL","HTTP/1.1",1);
+    char *x;
+    x = strchr(request->http_uri,'?');
+    if(x == NULL){
+        setenv("QUERY_STRING","",1);
+    }else{
+        x = x+1;
+        setenv("QUERY_STRING",x,1);
+    }
     setenv("SERVER_SOFTWARE","ICWS",1);
-    setenv("PATH_INFO",path,1);
-    setenv("REMOTE_ADDR",hostBuf,1);
-    setenv("SCRIPT_NAME",cgiProgram,1);
-    setenv("QUERY_STRING",strchr(request->http_uri,'?')+1,1);
+    char *p;
+    strcpy(p,strtok_r(request->http_uri, "?", &p));
+    if(strlen(p) > 0)setenv("PATH_INFO",p,1);
+    //fix remote addr
+    printf("%s\n",environment_ip);
+    if(strlen(svcBuf) > 0)setenv("REMOTE_ADDR",environment_ip,1);
+    if(strlen(cgiProgram) > 0)setenv("SCRIPT_NAME",cgiProgram,1);
 }
 
-void serve_cgi(int connFd,Request *request){
-    set_environment(request);
+void serve_cgi(int connFd,Request *request, char *message, all_request_environment req_env,int isPOST){
     //todo after set environment do something idk
     int c2pFds[2]; /* Child to parent pipe */
     int p2cFds[2]; /* Parent to child pipe */
@@ -273,6 +280,7 @@ void serve_cgi(int connFd,Request *request){
     if (pid == 0) { /* Child - set up the conduit & run inferior cmd */
         /* Wire pipe's incoming to child's stdin */
         /* First, close the unused direction. */
+        set_environment(request,req_env);
         if (close(p2cFds[1]) < 0) fail_exit("failed to close p2c[1]");
         if (p2cFds[0] != STDIN_FILENO) {
             if (dup2(p2cFds[0], STDIN_FILENO) < 0)
@@ -298,19 +306,17 @@ void serve_cgi(int connFd,Request *request){
         if (close(c2pFds[1]) < 0) fail_exit("failed to close c2p[1]");
         /* Close the read direction in parent's outgoing */
         if (close(p2cFds[0]) < 0) fail_exit("failed to close p2c[0]");
-        char *message = "OMGWTFBBQ\n";
-        /* Write a message to the child - replace with write_all as necessary */
-        write(p2cFds[1], message, strlen(message));
-        /* Close this end, done writing. */
+        ///////////////////////////////////////////////////
+        if (isPOST){
+            write_all(p2cFds[1], message, sizeof(message));
+        } 
+        //////////////////////////////////////////////////
         if (close(p2cFds[1]) < 0) fail_exit("close p2c[01] failed.");
-
         char buf[MAXBUF+1];
         ssize_t numRead;
         /* Begin reading from the child */
         while ((numRead = read(c2pFds[0], buf, MAXBUF))>0) {
-            printf("Parent saw %ld bytes from child...\n", numRead);
-            buf[numRead] = '\x0'; /* Printing hack; won't work with binary data */
-            write_all(connFd,buf,MAXBUF);
+            write_all(connFd,buf,numRead);
         }
         /* Close this end, done reading. */
         if (close(c2pFds[0]) < 0) fail_exit("close c2p[01] failed.");
@@ -320,14 +326,6 @@ void serve_cgi(int connFd,Request *request){
     }
     return;
 }
-
-void sigint_hanlder(int signum){
-    pthread_cond_destroy(&condQueue);
-    pthread_mutex_destroy(&mutexQueue);
-    pthread_mutex_destroy(&parseQueue);
-    exit(1);
-}
-
 
 void serve_http(int connFd, char *rootFolder) {
     char buf[MAXBUF];
@@ -345,7 +343,7 @@ void serve_http(int connFd, char *rootFolder) {
         pret = poll(fds,1,timeout*1000);
         if (pret == 0)
         {
-            mysprinf(408,"",0,"null","close",buf);
+            mysprinf(408,rootFolder,0,"NULL","Close",buf);
             write_all(connFd,buf,strlen(buf));
             return;
         }
@@ -354,7 +352,8 @@ void serve_http(int connFd, char *rootFolder) {
             if((readRet = read(connFd,sbuf,MAXBUF)) > 0){
                 strcat(buf,sbuf);
                 memset(sbuf,0,MAXBUF);
-                if(strstr(buf, "\r\n\r\n") != NULL){
+                //if(strstr(buf, "\r\n\r\n") != NULL){
+                if(strstr(buf, "\r\n\r\n")){
                     pthread_mutex_lock(&parseQueue);
                     Request *request = parse(buf,sizeof(buf),connFd);
                     pthread_mutex_unlock(&parseQueue);
@@ -364,26 +363,42 @@ void serve_http(int connFd, char *rootFolder) {
                     if (!readRet) return ;  
                     /* Check if request == NULL */
                     if(request == NULL){
-                        mysprinf(400,"",0,"null",checkConnection,buf);
+                        mysprinf(400,rootFolder,0,"NULL",checkConnection,buf);
                         write_all(connFd,buf, strlen(buf));
                         return ;
                     }
-                    //everything work now but need change to HTTP/1.0
-                    if (strcasecmp(request->http_version, "HTTP/1.1")){
-                        mysprinf(505,"",0,"null",checkConnection,buf);
-                        write_all(connFd,buf, strlen(buf));
-                        return ;
-                    }
+                    char path[MAXBUF];
                     strcpy(path, rootFolder);
                     strcat(path, request->http_uri);
-                    if(strncasecmp(request->http_uri,"/cgi/",5) == 0){
-                        serve_cgi(connFd,request);
-                    }
+                    all_request_environment request_environment;
+                    find_environment(request,request_environment);
                     //add index.html to path if no have
                     if(strcmp(request->http_uri,"/") == 0){
                         strcat(path,"index.html");
                     } 
-                    if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
+                    //everything work now but need change to HTTP/1.0
+                    if (strcasecmp(request->http_version, "HTTP/1.1")){
+                        mysprinf(505,path,0,request_environment.CONTENT_LENGTH,checkConnection,buf);
+                        write_all(connFd,buf, strlen(buf));
+                        return ;
+                    }
+                    if(strncasecmp(request->http_uri,"/cgi/",5) == 0){
+                        if (strlen(request_environment.CONTENT_LENGTH) < 0){
+                            mysprinf(411,path,0,request_environment.CONTENT_TYPE,checkConnection,buf);
+                            write_all(connFd,buf,strlen(buf));
+                            return;
+                        }
+                        char *message = "";
+                        if(strcasecmp(request->http_method, "POST") == 0 && request->http_uri[0] == '/'){
+                            message = strstr(buf,"\r\n\r\n");
+                            if(message != NULL)message = message + 4;
+                            serve_cgi(connFd,request,message,request_environment,1);
+                        }else{
+                            serve_cgi(connFd,request,message,request_environment,0);    
+                        }
+                        break;
+                    }
+                    else if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
                         printf("LOG: Sending %s\n", path);
                         respond_server(connFd, path, 1,checkConnection);
                     }
@@ -421,6 +436,7 @@ void executeTask(Task* task){
 }
 
 void *startThread(void* args){
+    pthread_detach(pthread_self());
     while(1){
         Task task;
         pthread_mutex_lock(&mutexQueue);
@@ -434,22 +450,33 @@ void *startThread(void* args){
         }
         taskCount--;
         pthread_mutex_unlock(&mutexQueue);
+        if(task.connFd == -123){
+            break;
+        }
         executeTask(&task);
     }
+    return NULL;
 }
 
+void sigint_hanlder(int signum){
+    flag = 1;
+}
 
 int main(int argc, char* argv[])
 {
-    signal(SIGINT,sigint_hanlder);
+    struct sigaction action;
+    action.sa_handler = sigint_hanlder;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGINT, &action, NULL);    
+
     int c = 0;
     static struct option long_options[] = 
     {
         {"port",      required_argument,       0,  'p' },
         {"root",      required_argument,       0,  'r' },
-        {"numthreads",required_argument,       0,  'n'},
+        {"numThreads",required_argument,       0,  'n'},
         {"timeout",   required_argument,       0,  't'},
-        {"cgiHandler", required_argument,      0,   'c'},
+        {"cgiHandler", required_argument,      0,  'c'},
         {0,0,0,0}
     };
     int long_index =0;
@@ -466,7 +493,7 @@ int main(int argc, char* argv[])
              case 'c' : strcpy(cgiProgram,optarg);
                  break;    
              default:
-                    printf("Invalid/Unknown option");
+                    printf("Invalid/Unknown option\n");
                     return 1;
         }
     }
@@ -482,45 +509,54 @@ int main(int argc, char* argv[])
     }
 
     if (strlen(listenPort) == 0 || strlen(wwwRoot) == 0){
-        printf("Invalid input");
+        printf("Invalid input\n");
         exit(-1);
     }
-    // printf("%s\n",listenPort);
-    // printf("%s\n",wwwRoot);
 
     int listenFd = open_listenfd(listenPort);
-
     for (;;) {
         struct sockaddr_storage clientAddr;
         socklen_t clientLen = sizeof(struct sockaddr_storage);
-
         int connFd = accept(listenFd, (SA *) &clientAddr, &clientLen);
         if (connFd < 0) { 
+            if(flag == 1){
+                int i;
+                for(i = 0; i < THREAD_NUM; i++){
+                    Task task;
+                    task.connFd = -123;
+                    memcpy(&task.clientAddr, &clientAddr, sizeof(struct sockaddr_storage));
+                    strcpy(task.wwwRoot, wwwRoot);
+                    submitTask(task);
+                }
+                break;
+            }
             fprintf(stderr, "Failed to accept\n"); 
             sleep(1);
             continue; 
         }
-
-        if (getnameinfo((SA *) &clientAddr, clientLen, 
-                        hostBuf, MAXBUF, svcBuf, MAXBUF, 0)==0) 
+        if (getnameinfo((SA *) &clientAddr, clientLen, hostBuf, MAXBUF, svcBuf, MAXBUF, 0)==0){
             printf("Connection from %s:%s\n", hostBuf, svcBuf);
-        else
-            printf("Connection from ?UNKNOWN?\n");
-       
+            struct sockaddr_in *sin = (struct sockaddr_in *)&clientAddr;
+            unsigned char *ip = (unsigned char *)&sin->sin_addr.s_addr;
+            // printf("%d %d %d %d\n", ip[0], ip[1], ip[2], ip[3]);
+            int i;
+            memset(environment_ip,0,MAXBUF);
+            for (i = 0; i<4; i++){
+                char x[MAXBUF];
+                sprintf(x,"%d.",ip[i]);
+                strcat(environment_ip,x);
+            }
+            environment_ip[strlen(environment_ip)-1] = '\0';
+        }else printf("Connection from ?UNKNOWN?\n");
+
         struct Task task;
         task.connFd = connFd;
         memcpy(&task.clientAddr, &clientAddr, sizeof(struct sockaddr_storage));
         strcpy(task.wwwRoot, wwwRoot);
         submitTask(task);
     }
-
-    // for(int i = 0; i < THREAD_NUM; i++){
-    //     if (pthread_join(&threadPool[i],NULL) != 0){
-    //         perror("Failed to join thread\n");
-    //     }
-    // }
     pthread_mutex_destroy(&mutexQueue);
     pthread_mutex_destroy(&parseQueue);
     pthread_cond_destroy(&condQueue);
-    return 0;
+    return 1;
 }

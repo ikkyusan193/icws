@@ -1,0 +1,5 @@
+post /cgi/ http/1.1
+content-type: text-plain
+content-length: 9
+
+text=ICWS
