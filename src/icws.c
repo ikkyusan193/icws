@@ -53,7 +53,8 @@ typedef struct all_request_environment{
     char HTTP_CONNECTION[MAXBUF];
 } all_request_environment;
 
-
+int flag = 0;
+char environment_ip[MAXBUF];
 char hostBuf[MAXBUF];
 char svcBuf[MAXBUF];
 char wwwRoot[MAXBUF];
@@ -61,11 +62,11 @@ char wwwRoot[MAXBUF];
 int timeout = 2000; //default timeout = 1min
 char cgiProgram[MAXBUF];
 
-int flag = 0;
-char environment_ip[MAXBUF];
+
+
+
 
 void mysprinf(int code, char *path, unsigned long stsize ,char* type,char* connectionType ,char* buf){  
-
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     char date[100];
@@ -115,6 +116,15 @@ void mysprinf(int code, char *path, unsigned long stsize ,char* type,char* conne
                     "Content-type: NULL\r\n\r\n"
                     , code, date, connectionType);
                     break;
+        case 501:
+                sprintf(buf,
+                    "HTTP/1.1 %d Unsupported Method\r\n"
+                    "Date: %s\r\n"
+                    "Server: Tiny\r\n"
+                    "Connection: %s\r\n"
+                    "Content-type: NULL\r\n\r\n"
+                    , code, date, connectionType);
+                    break;            
         case 200:
                 sprintf(buf,
                     "HTTP/1.1 %d OK\r\n"
@@ -167,7 +177,6 @@ void respond_server(int connFd, char *path, int get, char* connectionType) {
             printf("inputFd was %d\n", inputFd);
         }
         while ((numRead = read(inputFd, buf, MAXBUF)) > 0) {
-            /* What about short counts? */
             write_all(connFd, buf, numRead);
         }
         close(inputFd);
@@ -264,7 +273,6 @@ void set_environment(Request *request, all_request_environment req_env){
     strcpy(p,strtok_r(request->http_uri, "?", &p));
     if(strlen(p) > 0)setenv("PATH_INFO",p,1);
     //fix remote addr
-    printf("%s\n",environment_ip);
     if(strlen(svcBuf) > 0)setenv("REMOTE_ADDR",environment_ip,1);
     if(strlen(cgiProgram) > 0)setenv("SCRIPT_NAME",cgiProgram,1);
 }
@@ -340,6 +348,7 @@ void serve_http(int connFd, char *rootFolder) {
         fds[0].fd = connFd;
         fds[0].events = 0;
         fds[0].events = POLLIN;
+        //x1000 to make it seconds
         pret = poll(fds,1,timeout*1000);
         if (pret == 0)
         {
@@ -399,16 +408,16 @@ void serve_http(int connFd, char *rootFolder) {
                         break;
                     }
                     else if(strcasecmp(request->http_method, "GET") == 0 && request->http_uri[0] == '/'){
-                        printf("LOG: Sending %s\n", path);
+                        //printf("LOG: Sending %s\n", path);
                         respond_server(connFd, path, 1,checkConnection);
                     }
                     else if(strcasecmp(request->http_method, "HEAD") == 0 && request->http_uri[0] == '/'){
-                        printf("LOG: Sending %s\n", path);
+                        //printf("LOG: Sending %s\n", path);
                         respond_server(connFd, path , 0,checkConnection);
                     }    
                     else 
                     {
-                        mysprinf(505,"",0,"null",checkConnection,buf);
+                        mysprinf(501,"",0,"NULL",checkConnection,buf);
                         write_all(connFd,buf, strlen(buf));
                         return ;
                     }
